@@ -11,15 +11,18 @@ import schedule
 from time import time
 
 
-# Настройка логирования
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
     handlers=[
         logging.FileHandler("assembly_info_log.log", encoding="utf-8"),
-        logging.StreamHandler()
+        logging.StreamHandler()  # вывод в консоль
     ]
 )
+
 logger = logging.getLogger(__name__)
 
 def main():
