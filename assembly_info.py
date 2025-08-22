@@ -126,4 +126,4 @@ if __name__ == '__main__':
     # Бесконечный цикл
     while True:
         schedule.run_pending()
-        time.sleep(1)  # Проверяем каждую секунду
+        # time.sleep(1)  # Проверяем каждую секунду
