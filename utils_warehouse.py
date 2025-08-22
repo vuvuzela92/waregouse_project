@@ -1,0 +1,435 @@
+import requests
+import pandas as pd
+import json
+from datetime import datetime, timedelta
+import base64
+import io
+import zipfile
+from openpyxl import load_workbook
+import re
+import os
+
+
+# Функция для загрузки API токенов из файла tokens.json
+def load_api_tokens():
+    # Укажи полный путь к tokens.json
+    file_path = r'D:\Pytnon_scripts\warehouse_scripts\tokens.json'
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Файл с токенами не найден: {file_path}")
+    
+    with open(file_path, encoding='utf-8') as f:
+        tokens = json.load(f)
+        return tokens
+
+def doc_categories():
+    """Функция реализует получение категорий документов, 
+    по методу 
+    https://dev.wildberries.ru/openapi/financial-reports-and-accounting#tag/Dokumenty/paths/~1api~1v1~1documents~1categories/get
+    Лимит запросов на один аккаунт продавца:
+    Период	    Лимит	    Интервал	Всплеск
+    10 секунд	1 запрос    10 секунд   5 запросов """
+    # Загружаем токены
+    with open('tokens.json', 'r', encoding='utf-8') as file:
+        tokens = json.load(file)
+
+    # Определяем адрес запроса для получения документов 
+    url = 'https://documents-api.wildberries.ru/api/v1/documents/categories'
+    headers = {'Authorization' : tokens['Вектор']}
+    # Отправляе get запрос для получения категорий документов
+    try:
+        res = requests.get(url, headers=headers, timeout=2)
+        if res.status_code == 200:
+            doc_categories = pd.DataFrame(res.json()['data']['categories'])
+            return doc_categories
+    # для отлавливания любых ошибок, которые могут возникнуть при выполнении запроса
+    except requests.exceptions.RequestException as e:
+        print(f'"Ошибка запроса:", {e}')
+        return None
+    # для отлавливания других ошибок
+    except Exception as e:
+        print(f'Ошибка не связанная с запросом {e}')
+        return None
+
+
+# beginTime = (datetime.now()-timedelta(days=10)).strftime('%Y-%m-%d')
+# endTime = (datetime.now()-timedelta(days=1)).strftime('%Y-%m-%d')   
+
+def documents_list(token, title):
+    """Метод предоставляет список документов продавца. 
+    Вы можете получить один или несколько документов из полученного списка."""
+    
+    url = 'https://documents-api.wildberries.ru/api/v1/documents/list'
+    headers = {'Authorization' : token}
+    beginTime = (datetime.now()-timedelta(days=200)).strftime('%Y-%m-%d')
+    endTime = (datetime.now()-timedelta(days=0)).strftime('%Y-%m-%d') 
+    params = {'beginTime' : beginTime,
+              'endTime' : endTime,
+              'category': title}
+    
+    try:
+        res = requests.get(url, headers=headers, params=params)
+        if res.status_code == 200:
+            data = res.json()
+            df = pd.DataFrame(data['data']['documents'])
+            return df
+        else:
+            print('Отсутствует список документов')
+    except requests.exceptions.RequestException as e:
+        print(f'"Ошибка запроса:", {e}')
+        return None
+    # для отлавливания других ошибок
+    except Exception as e:
+        print(f'Ошибка не связанная с запросом {e}')
+        return None
+    
+# Получаем перечень доступных для скачивания документов
+def create_acceptance_act():
+    """Функция обрабатывает данные полученные в documents_list
+    для каждого кабинета на ВБ"""
+    
+    with open('tokens.json', 'r', encoding='utf-8') as file:
+        tokens = json.load(file)
+
+    doc_list_data = []
+    for account, token in tokens.items():
+        # Получаем список документов для ФБО
+        df = pd.DataFrame(documents_list(token, 'act-income'))
+        df['account'] = account
+        doc_list_data.append(df)
+        # Получаем список документов для ФБC
+        df = pd.DataFrame(documents_list(token, 'act-income-mp'))
+        df['account'] = account
+        doc_list_data.append(df)
+
+    documents_list_df = pd.concat(doc_list_data)
+    return documents_list_df
+
+def act_income_docs_list(download_all_acts, account):
+    """Функция позволяет обрабатывать акты-приема передачи, 
+        полученные от ВБ при приеме товара для продаж по системе ФБО"""
+    acts_list = []
+    # Первый уровень — внешний архив
+    zip_data = io.BytesIO(download_all_acts)
+    with zipfile.ZipFile(zip_data, 'r') as full_zip:
+        acts_income_zip = full_zip.namelist()
+        for act in acts_income_zip:
+            with full_zip.open(act) as nested_zip_file:
+                # Читаем содержимое вложенного ZIP как байты
+                nested_zip_bytes = nested_zip_file.read()
+                # Загружаем его в память как новый ZIP-объект
+                nested_zip = zipfile.ZipFile(io.BytesIO(nested_zip_bytes))
+                # Получаем список файлов внутри вложенного ZIP
+                print("Файлы внутри вложенного ZIP:")
+                for inner_file in nested_zip.namelist():
+                    print(f"  - {inner_file}")
+                    # Если нужно, обрабатываем, например, ищем .xlsx
+                    if inner_file.endswith('.xlsx'):
+                        with nested_zip.open(inner_file) as xlsx_file:
+                            # df = pd.read_excel(xlsx_file)
+                            # print(f"Первые строки Excel-файла {inner_file}:")
+                            # print(df.head())
+                            df_act = pd.read_excel(xlsx_file, header=None)
+                            # Получаем строки 8 и 9 как заголовки
+                            header_1 = df_act.iloc[8].fillna('')
+                            header_2 = df_act.iloc[9].fillna('')
+
+                            # Формируем комбинированные заголовки
+                            multi_header = [
+                                f"{h1.strip()} - {h2.strip()}" if h2.strip() else h1.strip()
+                                for h1, h2 in zip(header_1, header_2)
+                            ]
+
+                            print(f"Количество колонок в df: {df_act.shape[1]}")
+                            print(f"Количество заголовков: {len(multi_header)}")
+                            
+                            # Загружаем данные с 12 строки
+                            df = df_act.iloc[12:].copy()
+                            df.columns = multi_header
+                            df = df.dropna(how='all').reset_index(drop=True)
+                            df['Документ'] = act
+                            # df['Номер_документа'] = df['Документ'].str.extract(r'act-income-(\d+)\.zip')
+                            df['Номер_документа'] = df['Документ'].str.extract(r'(\d+)\.zip')[0]        
+                            df['account'] = account
+                            acts_list.append(df)
+                            print(f'Данные по {act} добавлены в список')
+    return acts_list
+
+
+def download_all_acts(payload, account):
+    """Загружает все акты по ФБО"""
+    with open('tokens.json', 'r', encoding='utf-8') as file:
+        tokens = json.load(file)
+   
+    url = 'https://documents-api.wildberries.ru/api/v1/documents/download/all'
+    headers = {'Authorization': tokens[account]}
+
+    try:
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            document_data = data['data']['document']
+            # Извлекаем зипы документов
+            decoded_data = base64.b64decode(document_data)
+            # Обрабатываем полученные документы
+            decoded_acts = act_income_docs_list(decoded_data, account)
+            return decoded_acts
+        else:
+            print('Отсутствует список документов')
+    except requests.exceptions.RequestException as e:
+        print(f'"Ошибка запроса:", {e}')
+        return None
+    # для отлавливания других ошибок
+    except Exception as e:
+        print(f'Ошибка не связанная с запросом {e}')
+        return None
+    
+def get_act_incomes():
+    """Объединяем акты приема-передачи по ФБО
+    со всех кабинетов в единный список,
+    затем создаем из него единый датафрейм"""
+    # Сюда помещаем все акты
+    decoded_data_list = []
+    act_incomes_dict = create_acceptance_act().groupby('account')['serviceName'].apply(list).to_dict()
+    # Проходим циклом по каждому списку документов, для каждого аккаунта
+    for account in act_incomes_dict:
+        print(f'Получаем данные для {account}')
+        
+        payload = {
+            "params": [
+                {
+                    "extension": "xlsx",
+                    "serviceName": doc_id
+                } for doc_id in act_incomes_dict[account]
+            ]
+        }
+        print(payload)
+        # Получаем и обрабатываем списки документов
+        decoded_data_list.append(download_all_acts(payload, account))
+    # Создаем список датафреймов для последующей обработки
+    all_dfs = []
+    # Складываем в список выше все датафреймы
+    for doc_list in decoded_data_list:
+        all_dfs.extend(doc_list)
+    # Создаем итоговый датафрейм для всех кабинетов
+    final_df = pd.concat(all_dfs, ignore_index=True)
+    # Убираем строки, которые не отностятся к кабинету
+    final_df = final_df[final_df['№ п\п'] != 'Итого']
+    return final_df
+
+# Получаем перечень доступных для скачивания документов
+def create_acceptance_certificate_marketplace():
+    """Функция обрабатывает данные полученные в documents_list
+    для каждого кабинета на ВБ"""
+    with open('tokens.json', 'r', encoding='utf-8') as file:
+        tokens = json.load(file)
+    doc_list_data = []
+    for account, token in tokens.items():
+        df = pd.DataFrame(documents_list(token, 'act-income-mp'))
+        df['account'] = account
+        doc_list_data.append(df)
+
+        df = pd.DataFrame(documents_list(token, 'act-income'))
+        df['account'] = account
+        doc_list_data.append(df)
+
+    documents_list_df = pd.concat(doc_list_data)
+    return documents_list_df
+
+def get_decoded_acts_fbs(account, doc_list):
+    """Позволяет обрабатывать архивный файл,
+        полученный из метода create_acceptance_certificate_marketplace"""
+    with open('tokens.json', 'r', encoding='utf-8') as file:
+        tokens = json.load(file)
+
+    url = 'https://documents-api.wildberries.ru/api/v1/documents/download/all'
+    headers = {'Authorization': tokens[account]}
+
+    payload = {
+                "params": [
+                    {
+                        "extension": "xlsx",
+                        "serviceName": doc_id
+                    } for doc_id in doc_list
+                ]
+            }
+    try:
+        res = requests.post(url, json=payload, headers=headers)
+        if res.status_code == 200:
+            data = res.json()
+            document_data = data['data']['document']
+            # Извлекаем зипы документов
+            decoded_data = base64.b64decode(document_data)
+            # Получаю общий архив, со всеми запрошенными документами
+            decoded_acts = io.BytesIO(decoded_data)
+            # Обрабатываем полученные документы
+            return decoded_acts
+        else:
+            print('Отсутствует список документов')
+    except requests.exceptions.RequestException as e:
+        print(f'"Ошибка запроса:", {e}')
+        return None
+    # для отлавливания других ошибок
+    except Exception as e:
+        print(f'Ошибка не связанная с запросом {e}')
+        return None
+    
+
+def proccessing_data_acceptance_act(account, decoded_acts):
+    """Позволяет обрабатывать каждый отдельный архив, который
+    содержит внутри эксель файл с информацией о приеме передаче товара
+    по заказам ФБС. Возвращает датафрейм с информацией по каждому
+    сборочному заданию в документе."""
+    acts_list = []
+    # Открываем данные общего архива со всеми документами
+    with zipfile.ZipFile(decoded_acts, 'r') as full_zip:
+        # Представляем документы в архиве, как коллекцию zip-файлов
+        acts_income_zip = full_zip.namelist()
+        for act in acts_income_zip:
+            # Проходим циклом по каждому документу
+            with full_zip.open(act) as nested_zip_file:
+                # Читаем содержимое вложенного ZIP как байты
+                nested_zip_bytes = nested_zip_file.read()
+                # Загружаем его в память как новый ZIP-объект. Внутри как правило два файла, один эксель, другой .sig
+                nested_zip = zipfile.ZipFile(io.BytesIO(nested_zip_bytes))
+                # Получаем список файлов внутри вложенного ZIP
+                print("Файлы внутри вложенного ZIP:")
+                # Теперь извлекаем каждый эксель файл
+                for inner_file in nested_zip.namelist():
+                    print(f"  - {inner_file}")
+                    # Если нужно, обрабатываем, например, ищем .xlsx
+                    if inner_file.endswith('.xlsx'):
+                        with nested_zip.open(inner_file) as xlsx_file:
+                            wb = load_workbook(xlsx_file, read_only=True)
+                            ws = wb.active
+                            # Получаем значение из D3
+                            if ws['D3'].value:
+                                date_value = ws['D3'].value
+                            elif ws['F3'].value:
+                                date_value = ws['F3'].value
+                            else:
+                                date_value = 'Нет даты'
+                            df_act = pd.read_excel(xlsx_file, header=None)
+
+                            # Получаем строки 8 и 9 как заголовки
+                            header_1 = df_act.iloc[8].fillna('')
+                            header_2 = df_act.iloc[9].fillna('')
+
+                            # Формируем комбинированные заголовки
+                            multi_header = [
+                                f"{h1.strip()} - {h2.strip()}" if h2.strip() else h1.strip()
+                                for h1, h2 in zip(header_1, header_2)
+                            ]
+
+                            print(f"Количество колонок в df: {df_act.shape[1]}")
+                            print(f"Количество заголовков: {len(multi_header)}")
+                            
+                            # Загружаем данные с 12 строки
+                            df = df_act.iloc[12:].copy()
+                            df.columns = multi_header
+                            df = df.dropna(how='all').reset_index(drop=True)
+                            df['Документ'] = act
+                            df['Дата'] = date_value
+                            df['Дата'] = df['Дата'].str.replace(' г.', '').str.strip()
+                            df['Номер_документа'] = df['Документ'].str.extract(r'act-income-mp-(\d+)\.zip')        
+                            df['account'] = account
+                            acts_list.append(df)
+                            print(f'Данные по {act} добавлены в список')
+    return acts_list
+
+
+def get_all_fbs_acts():
+    """ Собирает акты со всех кабинетов, используя методы 
+        get_decoded_acts_fbs и proccessing_data_acceptance_act.
+        Объединяет их в единый датафрейм."""
+    acceptance_certificate_marketplace_dict = create_acceptance_certificate_marketplace().groupby('account')['serviceName'].apply(list).to_dict()
+    full_docs = []
+    for account, doc_list in acceptance_certificate_marketplace_dict.items():
+        act = get_decoded_acts_fbs(account, doc_list)
+        full_docs.extend(proccessing_data_acceptance_act(account, act))
+    final_df = pd.concat(full_docs)    
+    final_df = final_df[final_df['Фактически принято - Стикер/этикетка'] != 'Итого']
+    return final_df
+
+
+def clean_and_parse_date(date_str):
+    # Удаляем кавычки и букву "г"
+    cleaned = re.sub(r'[\"г]', '', str(date_str)).strip()
+    # Преобразуем в дату
+    try:
+        return datetime.strptime(cleaned, '%d %m %Y')
+    except Exception:
+        return None  # или np.nan, если используете numpy
+    
+def create_insert_table_db(df: pd.DataFrame, table_name: str, columns_type: dict, key_columns: tuple):
+    """
+    Загружает DataFrame в таблицу PostgreSQL с upsert по уникальному ключу.
+    Если таблицы нет — создает с нужными типами и ограничением уникальности.
+    """
+    import psycopg2
+    import psycopg2.extras as extras
+    from dotenv import load_dotenv
+    import os
+
+    load_dotenv()
+    user = os.getenv('USER_2')
+    name = os.getenv('NAME_2')
+    password = os.getenv('PASSWORD_2')
+    host = os.getenv('HOST_2')
+    port = os.getenv('PORT_2')
+
+    CONNECTION_TIMEOUT = 10
+    QUERY_TIMEOUT = 5
+
+    columns_definition = ",\n    ".join([f"{col} {dtype}" for col, dtype in columns_type.items()])
+    unique_constraint = f"UNIQUE ({', '.join(key_columns)})"
+
+    try:
+        conn = psycopg2.connect(
+            dbname=name,
+            user=user,
+            password=password,
+            host=host,
+            port=port,
+            connect_timeout=CONNECTION_TIMEOUT
+        )
+        conn.autocommit = False
+        print("Соединение с базой данных установлено.")
+        cur = conn.cursor()
+
+        cur.execute(f"SET statement_timeout = {QUERY_TIMEOUT * 100};")
+
+        # Создание таблицы с уникальным ограничением
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                {columns_definition},
+                {unique_constraint}
+            );
+        """)
+        print(f"Таблица {table_name} создана или уже существует.")
+
+        columns = list(df.columns)
+        tuples = list(df.itertuples(index=False, name=None))
+
+        # Формируем запрос для upsert
+        insert_query = f"""
+            INSERT INTO {table_name} ({', '.join(columns)})
+            VALUES %s
+            ON CONFLICT ({', '.join(key_columns)}) DO UPDATE SET
+            {', '.join([f"{col}=EXCLUDED.{col}" for col in columns if col not in key_columns])};
+        """
+        extras.execute_values(cur, insert_query, tuples)
+
+        conn.commit()
+        print("Данные успешно добавлены в БД.")
+
+    except psycopg2.OperationalError as e:
+        print(f"Ошибка подключения к БД: {e}")
+    except psycopg2.DatabaseError as e:
+        print(f"Ошибка при загрузке данных в БД: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+            print("Соединение с базой данных закрыто.")
