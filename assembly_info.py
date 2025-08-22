@@ -2,8 +2,8 @@ from assembly_info_utils import fetch_all_assembly_data, create_assembly_info_df
 import pandas as pd
 import sys
 # Укажи путь к папке, где лежит utils_warehouse.py
-sys.path.append(r'D:\Pytnon_scripts\warehouse_scripts')
-sys.path.append(r'D:\Pytnon_scripts\tokens.json')
+# sys.path.append(r'D:\Pytnon_scripts\warehouse_scripts')
+# sys.path.append(r'D:\Pytnon_scripts\tokens.json')
 from utils_warehouse import load_api_tokens, create_insert_table_db
 import asyncio
 import logging
@@ -23,6 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def main():
+    logger.info('Начало работы скрипта')
     # Получаем данные по сборочным заданиям
     all_data = asyncio.run(fetch_all_assembly_data())
     # Создаем датафрейм с информацие по сборочным заданиям
