@@ -8,7 +8,7 @@ from utils_warehouse import load_api_tokens, create_insert_table_db
 import asyncio
 import logging
 import schedule
-from time import time
+import time
 
 
 for handler in logging.root.handlers[:]:
