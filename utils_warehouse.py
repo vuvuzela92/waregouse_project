@@ -13,7 +13,10 @@ import os
 # Функция для загрузки API токенов из файла tokens.json
 def load_api_tokens():
     # Укажи полный путь к tokens.json
-    file_path = 'tokens.json'
+    # Определяем директорию текущего скрипта
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(CURRENT_DIR, "tokens.json")
+    # file_path = 'tokens.json'
     
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Файл с токенами не найден: {file_path}")
