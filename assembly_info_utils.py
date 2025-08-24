@@ -10,11 +10,16 @@ from utils_warehouse import load_api_tokens
 from time import time
 import logging
 
+# Определяем директорию текущего файла (скрипта)
+LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assembly_info_log.log")
+
 logging.basicConfig(
-    filename='assembly_info_log.log',
     level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(name)s | %(funcName)s | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE_PATH, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
