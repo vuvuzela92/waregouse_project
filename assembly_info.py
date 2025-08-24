@@ -25,7 +25,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-def main():
+if __name__ == "__main__":
     logger.info('Начало работы скрипта')
     # Получаем данные по сборочным заданиям
     all_data = asyncio.run(fetch_all_assembly_data())
@@ -121,13 +121,3 @@ def main():
     key_cols = ('id', 'supplier_status', 'wb_status')
     # Отправляем данные в таблицу БД
     create_insert_table_db(df_status_model, table_name, columns_type, key_cols)
-
-if __name__ == '__main__':
-    # Запускать каждые 5 минут
-    schedule.every(5).minutes.do(main)
-    logger.info("Планировщик запущен. Следующий запуск через 5 минут.")
-    
-    # Бесконечный цикл
-    while True:
-        schedule.run_pending()
-        # time.sleep(1)  # Проверяем каждую секунду
