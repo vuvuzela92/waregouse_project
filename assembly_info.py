@@ -7,8 +7,6 @@ import sys
 from utils_warehouse import load_api_tokens, create_insert_table_db
 import asyncio
 import logging
-import schedule
-import time
 
 
 for handler in logging.root.handlers[:]:
@@ -102,7 +100,7 @@ if __name__ == "__main__":
         'color_code': 'TEXT',
         'rid': 'TEXT',
         'created_at': 'TIMESTAMPTZ',  # TIMESTAMP WITH TIME ZONE
-        'created_at_msk': 'TEXT',
+        'created_at_msk': 'TIMESTAMPTZ',
         'offices': 'TEXT',
         'skus': 'TEXT',
         'warehouse_id': 'INTEGER',
