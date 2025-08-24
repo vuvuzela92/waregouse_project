@@ -10,3 +10,4 @@ venv/
 .vscode/
 tokens.json
 .env
+assembly_info_log.log
