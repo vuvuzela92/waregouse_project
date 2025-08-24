@@ -12,12 +12,15 @@ import logging
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
+# Определяем директорию текущего файла (скрипта)
+LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assembly_info_log.log")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
     handlers=[
-        logging.FileHandler("assembly_info_log.log", encoding="utf-8"),
-        logging.StreamHandler()  # вывод в консоль
+        logging.FileHandler(LOG_FILE_PATH, encoding="utf-8"),
+        logging.StreamHandler()
     ]
 )
 
