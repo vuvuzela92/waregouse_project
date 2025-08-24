@@ -103,13 +103,18 @@ async def fetch_wb_assembly_task_info(account: str, api_token: str):
 
                         except aiohttp.ClientConnectorError as e:
                             print(f"[{account}] Ошибка подключения: {e}")
+                            logger.error(f"[{account}] Ошибка подключения: {e}")
                         except aiohttp.ServerDisconnectedError:
                             print(f"[{account}] Сервер разорвал соединение")
+                            logger.error(f"[{account}] Сервер разорвал соединение")
                         except aiohttp.ClientTimeout:
                             print(f"[{account}] Таймаут соединения")
+                            logger.error(f"[{account}] Таймаут соединения")
                         except asyncio.TimeoutError:
                             print(f"[{account}] Таймаут asyncio")
+                            logger.error(f"[{account}] Таймаут asyncio")
                         except Exception as e:
+                            logger.error(f"[{account}] Неизвестная ошибка: {e}")
                             print(f"[{account}] Неизвестная ошибка: {e}")
 
                         # Задержка перед повтором
@@ -117,6 +122,7 @@ async def fetch_wb_assembly_task_info(account: str, api_token: str):
 
                     if not success:
                         print(f"[{account}] Не удалось получить данные после {max_attempts} попыток. Прерываем.")
+                        logger.error(f"[{account}] Не удалось получить данные после {max_attempts} попыток. Прерываем.")
                         break
 
                     # Если next == 0 — больше нет данных
@@ -184,43 +190,54 @@ async def get_tasks_status(account: str, api_token: str, payload: dict):
                             order['account'] = account
                         full_data.extend(orders)
                         print(f"[{account}] Успешно получены статусы для {len(orders)} заказов")
+                        logger.info(f"[{account}] Успешно получены статусы для {len(orders)} заказов")
                         return full_data 
 
                     elif res.status == 401:
                         print(f"[{account}] Ошибка авторизации: 401. Проверьте токен.")
+                        logger.error(f"[{account}] Ошибка авторизации: 401. Проверьте токен.")
                         return full_data
 
                     elif res.status == 400:
                         print(f"[{account}] Ошибка запроса: 400. Проверьте payload (формат: {{'orders': [...]}}).")
+                        logger.error(f"[{account}] Ошибка запроса: 400. Проверьте payload (формат: {{'orders': [...]}}).")
                         return full_data
 
                     elif res.status == 429:
                         print(f"[{account}] Слишком много запросов. Ждём 60 секунд...")
+                        logger.error(f"[{account}] Слишком много запросов. Ждём 60 секунд...")
                         await asyncio.sleep(60)
                         continue  # Повторим попытку
 
                     elif 400 <= res.status < 500:
                         print(f"[{account}] Клиентская ошибка: {res.status}")
+                        logger.error(f"[{account}] Клиентская ошибка: {res.status}")
                         return full_data  # Не повторяем
 
                     else:
                         print(f"[{account}] Серверная ошибка: {res.status}. Попытка {attempt + 1} из {max_attempts}")
+                        logger.error(f"[{account}] Серверная ошибка: {res.status}. Попытка {attempt + 1} из {max_attempts}")
                         await asyncio.sleep(1)
 
             except (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError) as e:
                 print(f"[{account}] Ошибка подключения: {e}")
+                logger.error(f"[{account}] Ошибка подключения: {e}")
             except aiohttp.ClientTimeout:
                 print(f"[{account}] Таймаут соединения")
+                logger.error(f"[{account}] Таймаут соединения")
             except asyncio.TimeoutError:
                 print(f"[{account}] Таймаут asyncio")
+                logger.error(f"[{account}] Таймаут asyncio")
             except Exception as e:
                 print(f"[{account}] Неизвестная ошибка: {e}")
+                logger.error(f"[{account}] Неизвестная ошибка: {e}")
 
             # Задержка перед повторной попыткой
             await asyncio.sleep(1)
 
         # Если все попытки провалились
         print(f"[{account}] Не удалось получить данные после {max_attempts} попыток.")
+        logger.error(f"[{account}] Не удалось получить данные после {max_attempts} попыток.")
         return full_data
     
 
@@ -255,6 +272,7 @@ async def fetch_all_statuses(assembly_dict, tokens_dict, max_concurrent=8):
                         all_statuses.extend(statuses)
                 except Exception as e:
                     print(f"[{account}] Ошибка при получении статусов: {e}")
+                    logger.error(f"[{account}] Ошибка при получении статусов: {e}")
                 # Лимит: 200 мс между запросами
                 await asyncio.sleep(0.2)
 
@@ -267,6 +285,7 @@ async def fetch_all_statuses(assembly_dict, tokens_dict, max_concurrent=8):
             tasks.append(task)
         else:
             print(f"[{account}] Нет ID для получения статусов")
+            logger.info(f"[{account}] Нет ID для получения статусов")
 
     # Запускаем все задачи
     await asyncio.gather(*tasks)
