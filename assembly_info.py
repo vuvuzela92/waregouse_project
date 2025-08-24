@@ -1,6 +1,7 @@
 from assembly_info_utils import fetch_all_assembly_data, create_assembly_info_df, fetch_all_statuses
 import pandas as pd
 import sys
+import os
 # Укажи путь к папке, где лежит utils_warehouse.py
 # sys.path.append(r'D:\Pytnon_scripts\warehouse_scripts')
 # sys.path.append(r'D:\Pytnon_scripts\tokens.json')
