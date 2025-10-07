@@ -8,6 +8,11 @@ import zipfile
 from openpyxl import load_workbook
 import re
 import os
+import logging
+import asyncpg
+from dotenv import load_dotenv
+import asyncio
+import aiohttp
 
 
 # Функция для загрузки API токенов из файла tokens.json
@@ -436,3 +441,152 @@ def create_insert_table_db(df: pd.DataFrame, table_name: str, columns_type: dict
         if conn:
             conn.close()
             print("Соединение с базой данных закрыто.")
+
+
+# Глобальный лок для создания таблицы
+table_creation_lock = asyncio.Lock()
+
+async def create_insert_table_db_async(df: pd.DataFrame, table_name: str, columns_type: dict, key_columns: tuple):
+    load_dotenv()
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(
+            user=os.getenv('USER_2'),
+            password=os.getenv('PASSWORD_2'),
+            database=os.getenv('NAME_2'),
+            host=os.getenv('HOST_2'),
+            port=os.getenv('PORT_2'),
+            timeout=10
+        )
+
+        # Проверка типов данных
+        valid_types = ['INTEGER', 'BIGINT', 'SMALLINT', 'NUMERIC', 'DATE', 'TIMESTAMP', 'BOOLEAN', 'TEXT', 'VARCHAR']
+        for col, dtype in columns_type.items():
+            if not dtype.strip():
+                raise ValueError(f"Пустой тип данных для колонки {col}")
+            base_type = dtype.split('(')[0].strip().upper()
+            if base_type not in valid_types:
+                raise ValueError(f"Недопустимый тип данных для колонки {col}: {dtype}")
+            if '(' in dtype and base_type not in ['NUMERIC', 'VARCHAR']:
+                raise ValueError(f"Скобки недопустимы для типа {base_type} в колонке {col}: {dtype}")
+
+        # Проверка и добавление отсутствующих колонок
+        missing_cols = set(columns_type.keys()) - set(df.columns)
+        for col in missing_cols:
+            df[col] = None
+            logging.info(f"Добавлена отсутствующая колонка {col} с None")
+        extra_cols = set(df.columns) - set(columns_type.keys())
+        if extra_cols:
+            logging.warning(f"Лишние колонки в DataFrame: {extra_cols}, они будут проигнорированы")
+
+        # Формирование SQL для колонок
+        columns_definition = ", ".join([f"{col} {dtype}" for col, dtype in columns_type.items()])
+        # создает SQL-выражение для уникального ограничения (UNIQUE constraint) в таблице базы данных.
+        unique_constraint = f"CONSTRAINT unique_{table_name} UNIQUE ({', '.join(key_columns)})" if key_columns else ""
+
+        # Отладка: вывод SQL-запроса
+        create_table_query = f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT FROM pg_tables WHERE tablename = '{table_name}') THEN
+                    CREATE TABLE {table_name} (
+                        {columns_definition}{', ' + unique_constraint if unique_constraint else ''}
+                    );
+                END IF;
+            END$$;
+        """
+
+
+
+        # Безопасное создание таблицы
+        async with table_creation_lock:
+            await conn.execute(create_table_query)
+        
+        # Подготовка данных для вставки
+        columns = list(columns_type.keys())  # Используем только колонки из columns_type
+        records = [tuple(None if pd.isna(x) else x for x in row) for row in df[columns].to_records(index=False)]
+
+        # Формирование UPSERT-запроса
+        updates = ', '.join([f"{col}=EXCLUDED.{col}" for col in columns if col not in key_columns])
+        query = f"""
+            INSERT INTO {table_name} ({', '.join(columns)})
+            VALUES ({', '.join([f'${i+1}' for i in range(len(columns))])})
+            ON CONFLICT ON CONSTRAINT unique_{table_name}
+            DO UPDATE SET {updates}
+        """
+        
+        await conn.executemany(query, records)
+        logging.info(f"Успешно сохранено {len(df)} строк в {table_name}")
+        
+    except Exception as e:
+        logging.error(f"Ошибка при работе с БД: {str(e)}")
+        raise
+    finally:
+        if conn:
+            await conn.close()
+
+
+# Данные по повторным отгрузкам
+semaphore = asyncio.Semaphore(10)
+
+async def re_shipment_info_get(account, api_token, date: str):
+    """Функция позволяет получать данные о сборочных задниях, требующих повторную отгрузку"""
+    
+    url = "https://marketplace-api.wildberries.ru/api/v3/supplies/orders/reshipment"
+    headers = {"Authorization": api_token}
+    
+    async with semaphore:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            retry_count = 0
+            while retry_count < 5:
+                try:
+                    async with session.get(url) as response:
+                        print(f"HTTP статус: {response.status} по ЛК {account}")
+                        
+                        if response.status == 400:
+                            err = await response.json()
+                            print(f"Ошибка 400 {account}: {err.get('message') or err}")
+                            break  # Выходим из цикла, т.к. 400 обычно не исправляется повтором
+                            
+                        if response.status == 429:
+                            print(f"429 Too Many Requests для {account} — ждём минуту")
+                            retry_count += 1
+                            await asyncio.sleep(60)
+                            continue
+                            
+                        response.raise_for_status()
+                        res_data = await response.json()
+                        
+                        # Добавляем account к каждому элементу
+                        if isinstance(res_data, list):
+                            for item in res_data:
+                                # Добавляем account к основному объекту
+                                item['account'] = account
+                                
+                                # Добавляем account к каждому заказу внутри orders
+                                if 'orders' in item and isinstance(item['orders'], list):
+                                    for order in item['orders']:
+                                        order['account'] = account
+                                        
+                            return res_data
+                        else:
+                            # Если ответ не список, добавляем account к объекту
+                            res_data['account'] = account
+                            
+                            # И к orders если они есть
+                            if 'orders' in res_data and isinstance(res_data['orders'], list):
+                                for order in res_data['orders']:
+                                    order['date'] = date
+                                    order['account'] = account
+                                    
+                            return res_data  # Возвращаем как список для единообразия
+                            
+                except aiohttp.ClientError as e:
+                    print(f"Сетевая ошибка для {account}: {e}")
+                    retry_count += 1
+                    await asyncio.sleep(30)
+            
+            # Если дошли сюда - все попытки исчерпаны
+            print(f"Не удалось получить данные для {account} после 5 попыток")
+            return []
