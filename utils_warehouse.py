@@ -590,3 +590,17 @@ async def re_shipment_info_get(account, api_token, date: str):
             # Если дошли сюда - все попытки исчерпаны
             print(f"Не удалось получить данные для {account} после 5 попыток")
             return []
+        
+def batchify(data, batch_size):
+    """
+    Splits data into batches of a specified size.
+
+    Parameters:
+    - data: The list of items to be batched.
+    - batch_size: The size of each batch.
+
+    Returns:
+    - A generator yielding batches of data.
+    """
+    for i in range(0, len(data), batch_size):
+        yield data[i:i + batch_size]
