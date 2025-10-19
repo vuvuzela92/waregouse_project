@@ -314,5 +314,5 @@ async def main_get_supply_and_orders():
                     }
 
     # Ключевые колонки для UPSERT
-    key_columns = ('supply_id', 'id')
+    key_columns = ('id',)
     create_insert_table_db_sync(final_df, table_name, columns_type, key_columns)
