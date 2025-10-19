@@ -18,6 +18,8 @@ from sqlalchemy.exc import SQLAlchemyError
 import logging
 import os
 from dotenv import load_dotenv
+import psycopg2
+from psycopg2 import OperationalError
 
 # Функция для загрузки API токенов из файла tokens.json
 def load_api_tokens():
@@ -717,3 +719,19 @@ def create_insert_table_db_sync(df: pd.DataFrame, table_name: str, columns_type:
     finally:
         if engine:
             engine.dispose()
+
+# Подключение к базе данных
+def create_connection(db_name, db_user, db_password, db_host, db_port):
+    connection = None
+    try:
+        connection = psycopg2.connect(
+            database=db_name,
+            user=db_user,
+            password=db_password,
+            host=db_host,
+            port=db_port,
+        )
+        print(f"Соединение с БД PostgreSQL успешно установлено в {datetime.now().strftime('%Y-%m-%d')}")
+    except OperationalError as error:
+        print(f"Произошла ошибка при подключении к БД PostgreSQL {error}")
+    return connection
