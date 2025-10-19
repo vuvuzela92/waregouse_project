@@ -1,6 +1,5 @@
-import pandas as pd
-from supply_data_utils import fetch_supply_and_orders
+from supply_data_utils import main_get_supply_and_orders
 import asyncio
 
-if __name__ == '__main__':
-    asyncio.run(fetch_supply_and_orders())
+if __name__== "__main__":
+    asyncio.run(main_get_supply_and_orders())

@@ -3,6 +3,9 @@ import aiohttp
 from utils_warehouse import load_api_tokens, create_connection, create_insert_table_db_sync
 import pandas as pd
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 
@@ -109,28 +112,24 @@ async def main():
     return pd.concat(res)
 
 
-def get_dict_supply(days = 11):
-    # Параметры соединения с БД
-    db_name, db_user, db_password, db_host, db_port = os.getenv('NAME_2'), os.getenv('USER_2'), os.getenv('PASSWORD_2'), os.getenv('HOST_2'), os.getenv('PORT_2')
+def get_dict_supply(days = 11, db_name = os.getenv('NAME_2'), db_user = os.getenv('USER_2'), db_password = os.getenv('PASSWORD_2'), db_host = os.getenv('HOST_2'), db_port = os.getenv('PORT_2')):
+        # __________________________________________________________________________________________________________________________________________________________________#
+        # Получаем список поставок
+        # __________________________________________________________________________________________________________________________________________________________________#
+        query = f"""
+        SELECT id, account
+        FROM supplies_data
+        WHERE created_at > CURRENT_DATE - INTERVAL '{days} days'
+        """
+        # Создаем соединение с БД
+        connection = create_connection(db_name, db_user, db_password, db_host, db_port)
+        # Запрашиваем данные из БД
+        df_db = pd.read_sql(query, connection)
 
-    # __________________________________________________________________________________________________________________________________________________________________#
-    # Получаем список поставок
-    # __________________________________________________________________________________________________________________________________________________________________#
-    query = f"""
-    SELECT id, account
-    FROM supplies_data
-    WHERE created_at > CURRENT_DATE - INTERVAL '{days} days'
-    """
-    # Создаем соединение с БД
-    connection = create_connection(db_name, db_user, db_password, db_host, db_port)
-    # Запрашиваем данные из БД
-    df_db = pd.read_sql(query, connection)
+        # словарь с парой аккаунт : список поставок
+        df_db_dict = df_db.groupby('account')['id'].apply(list).to_dict()
+        return df_db_dict
 
-    # словарь с парой аккаунт : список поставок
-    df_db_dict = df_db.groupby('account')['id'].apply(list).to_dict()
-    return df_db_dict
-
-dict_supply = get_dict_supply()
 
 # __________________________________________________________________________________________________________________________________________________________________#
 # Запрашиваем данные о содержании поставок на ВБ
@@ -209,7 +208,7 @@ async def get_orders_in_supply(account, api_token, supply_id):
         return None
     
 
-async def fetch_supply_and_orders():
+async def fetch_supply_and_orders(dict_supply):
     tokens = load_api_tokens()
     all_orders = []
     
@@ -253,7 +252,8 @@ async def fetch_supply_and_orders():
     
 
 async def main_get_supply_and_orders():
-    final_df = await fetch_supply_and_orders()
+    dict_supply = get_dict_supply()
+    final_df = await fetch_supply_and_orders(dict_supply)
     final_df = final_df.rename(columns={'scanPrice' : 'scan_price',
                                         'orderUid' : 'order_uid',
                                         'colorCode' : 'color_code',
