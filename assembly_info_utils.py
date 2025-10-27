@@ -297,3 +297,17 @@ async def fetch_all_statuses(assembly_dict, tokens_dict, max_concurrent=8):
 
     # Возвращаем DataFrame
     return pd.DataFrame(all_statuses)
+
+
+def convert_price(price) -> float:
+        """
+        Конвертирует цену из копеек в рубли с округлением до 3 знаков.
+        Args:
+            price: Цена в копейках
+        Returns:
+            float: Цена в рублях, округленная до 3 знаков
+        """
+        try:
+            return round(price / 100, 3)
+        except Exception:
+            return 0

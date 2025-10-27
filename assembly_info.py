@@ -78,8 +78,9 @@ if __name__ == "__main__":
     df_status_model['options'] = df_status_model['options'].astype(str)
     df_status_model['options'] = df_status_model['options'].str.replace('{', '').str.replace('}', '')
     # Приводим цены к реальному виду
-    df_status_model['price'] = df_status_model['price']/100
-    df_status_model['converted_price'] = df_status_model['converted_price']/100
+    df_status_model['scan_price'] = (df_status_model['price'] / 100).round(3)
+    df_status_model['price'] = (df_status_model['price'] / 100).round(3)
+    df_status_model['converted_price'] = (df_status_model['converted_price'] / 100).round(3)
 
     # На всякий случай, проверяем наличие дубликатов
     if df_status_model[['id', 'supplier_status', 'wb_status']].duplicated().sum() > 0:
@@ -96,8 +97,8 @@ if __name__ == "__main__":
         'supply_id': 'TEXT',
         'address': 'TEXT',
         'scan_price': 'NUMERIC(10,2)',
-        'price': 'INTEGER',
-        'converted_price': 'INTEGER',
+        'price': 'NUMERIC(10,2)',
+        'converted_price': 'INUMERIC(10,2)',
         'comment': 'TEXT',
         'delivery_type': 'TEXT',
         'order_uid': 'TEXT',
