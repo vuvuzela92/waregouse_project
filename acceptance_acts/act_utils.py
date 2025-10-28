@@ -50,7 +50,7 @@ def load_api_tokens():
 
 semaphore = asyncio.Semaphore(10)
 
-async def documents_list_async(token, title, days_back=200):
+async def documents_list_async(token, title, days_back=10):
     """Получить все документы с пагинацией"""
     url = 'https://documents-api.wildberries.ru/api/v1/documents/list'
     headers = {'Authorization': token}
