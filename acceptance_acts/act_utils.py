@@ -7,10 +7,15 @@ import asyncio
 import aiohttp
 import os
 import logging
-import asyncpg
 from dotenv import load_dotenv
 import zipfile
 from openpyxl import load_workbook
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
+import logging
+import os
+from dotenv import load_dotenv
+
 
 
 def batchify(data, batch_size):
@@ -45,7 +50,7 @@ def load_api_tokens():
 
 semaphore = asyncio.Semaphore(10)
 
-async def documents_list_async(token, title, days_back=10):
+async def documents_list_async(token, title, days_back=200):
     """Получить все документы с пагинацией"""
     url = 'https://documents-api.wildberries.ru/api/v1/documents/list'
     headers = {'Authorization': token}
@@ -109,20 +114,21 @@ async def documents_list_async(token, title, days_back=10):
 
 # Глобальный лок для создания таблицы
 table_creation_lock = asyncio.Lock()
-async def create_insert_table_db_async(df: pd.DataFrame, table_name: str, columns_type: dict, key_columns: tuple):
+def create_insert_table_db_sync(df: pd.DataFrame, table_name: str, columns_type: dict, key_columns: tuple):
     load_dotenv()
-
-    conn = None
+    
+    user = os.getenv('USER_2')
+    password = os.getenv('PASSWORD_2')
+    database = os.getenv('NAME_2') 
+    host = os.getenv('HOST_2')
+    port = os.getenv('PORT_2')
+    
+    connection_string = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    engine = None
+    
     try:
-        conn = await asyncpg.connect(
-            user=os.getenv('USER_2'),
-            password=os.getenv('PASSWORD_2'),
-            database=os.getenv('NAME_2'),
-            host=os.getenv('HOST_2'),
-            port=os.getenv('PORT_2'),
-            timeout=10
-        )
-
+        engine = create_engine(connection_string)
+        
         # Проверка типов данных
         valid_types = ['INTEGER', 'BIGINT', 'SMALLINT', 'NUMERIC', 'DATE', 'TIMESTAMP', 'BOOLEAN', 'TEXT', 'VARCHAR']
         for col, dtype in columns_type.items():
@@ -131,63 +137,89 @@ async def create_insert_table_db_async(df: pd.DataFrame, table_name: str, column
             base_type = dtype.split('(')[0].strip().upper()
             if base_type not in valid_types:
                 raise ValueError(f"Недопустимый тип данных для колонки {col}: {dtype}")
-            if '(' in dtype and base_type not in ['NUMERIC', 'VARCHAR']:
-                raise ValueError(f"Скобки недопустимы для типа {base_type} в колонке {col}: {dtype}")
 
         # Проверка и добавление отсутствующих колонок
         missing_cols = set(columns_type.keys()) - set(df.columns)
         for col in missing_cols:
             df[col] = None
             logging.info(f"Добавлена отсутствующая колонка {col} с None")
+        
         extra_cols = set(df.columns) - set(columns_type.keys())
         if extra_cols:
             logging.warning(f"Лишние колонки в DataFrame: {extra_cols}, они будут проигнорированы")
 
-        # Формирование SQL для колонок
+        # Формирование SQL для создания таблицы
         columns_definition = ", ".join([f"{col} {dtype}" for col, dtype in columns_type.items()])
-        # создает SQL-выражение для уникального ограничения (UNIQUE constraint) в таблице базы данных.
-        unique_constraint = f"CONSTRAINT unique_{table_name} UNIQUE ({', '.join(key_columns)})" if key_columns else ""
+        unique_constraint = f", CONSTRAINT unique_{table_name} UNIQUE ({', '.join(key_columns)})" if key_columns else ""
 
-        # Отладка: вывод SQL-запроса
         create_table_query = f"""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (SELECT FROM pg_tables WHERE tablename = '{table_name}') THEN
-                    CREATE TABLE {table_name} (
-                        {columns_definition}{', ' + unique_constraint if unique_constraint else ''}
-                    );
-                END IF;
-            END$$;
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                {columns_definition}{unique_constraint}
+            )
         """
 
-
-
-        # Безопасное создание таблицы
-        async with table_creation_lock:
-            await conn.execute(create_table_query)
+        # Создание таблицы
+        with engine.connect() as conn:
+            conn.execute(text(create_table_query))
+            conn.commit()
         
         # Подготовка данных для вставки
-        columns = list(columns_type.keys())  # Используем только колонки из columns_type
-        records = [tuple(None if pd.isna(x) else x for x in row) for row in df[columns].to_records(index=False)]
-
-        # Формирование UPSERT-запроса
-        updates = ', '.join([f"{col}=EXCLUDED.{col}" for col in columns if col not in key_columns])
-        query = f"""
-            INSERT INTO {table_name} ({', '.join(columns)})
-            VALUES ({', '.join([f'${i+1}' for i in range(len(columns))])})
-            ON CONFLICT ON CONSTRAINT unique_{table_name}
-            DO UPDATE SET {updates}
-        """
+        columns = list(columns_type.keys())
         
-        await conn.executemany(query, records)
+        # Создание временной таблицы для UPSERT
+        temp_table = f"temp_{table_name}"
+        
+        # Вставляем данные во временную таблицу
+        df[columns].to_sql(temp_table, engine, if_exists='replace', index=False)
+        
+        # Выполняем UPSERT из временной таблицы с явным преобразованием типов
+        with engine.connect() as conn:
+            if key_columns:
+                # Формируем SELECT с явным преобразованием типов
+                select_columns = []
+                for col in columns:
+                    if columns_type[col].upper() == 'TIMESTAMP':
+                        select_columns.append(f"CAST({col} AS TIMESTAMP)")  # Явное преобразование
+                    else:
+                        select_columns.append(col)
+                
+                updates = ', '.join([f"{col}=EXCLUDED.{col}" for col in columns if col not in key_columns])
+                upsert_query = f"""
+                    INSERT INTO {table_name} ({', '.join(columns)})
+                    SELECT {', '.join(select_columns)} FROM {temp_table}
+                    ON CONFLICT ({', '.join(key_columns)}) 
+                    DO UPDATE SET {updates}
+                """
+            else:
+                # Простая вставка с преобразованием типов
+                select_columns = []
+                for col in columns:
+                    if columns_type[col].upper() == 'TIMESTAMP':
+                        select_columns.append(f"CAST({col} AS TIMESTAMP)")
+                    else:
+                        select_columns.append(col)
+                
+                upsert_query = f"""
+                    INSERT INTO {table_name} ({', '.join(columns)})
+                    SELECT {', '.join(select_columns)} FROM {temp_table}
+                """
+            
+            conn.execute(text(upsert_query))
+            # Удаляем временную таблицу
+            conn.execute(text(f"DROP TABLE {temp_table}"))
+            conn.commit()
+        
         logging.info(f"Успешно сохранено {len(df)} строк в {table_name}")
         
-    except Exception as e:
+    except SQLAlchemyError as e:
         logging.error(f"Ошибка при работе с БД: {str(e)}")
         raise
+    except Exception as e:
+        logging.error(f"Неожиданная ошибка: {str(e)}")
+        raise
     finally:
-        if conn:
-            await conn.close()
+        if engine:
+            engine.dispose()
 
 
 # Получаем перечень доступных для скачивания документов
@@ -567,7 +599,7 @@ async def main():
 
         key_cols_fbo = ('vendor_code', 'box_barcode', 'document_number')
         table_name_fbo = 'acceptance_fbo_acts_new'
-        await create_insert_table_db_async(fbo_df, table_name_fbo, columns_type_fbo, key_cols_fbo)
+        create_insert_table_db_sync(fbo_df, table_name_fbo, columns_type_fbo, key_cols_fbo)
     else:
         print("Нет данных FBO для вставки в БД")
 
@@ -596,13 +628,13 @@ async def main():
             'sticker': 'VARCHAR(255)',
             'quantity': 'INTEGER', 
             'document': 'VARCHAR(255)',
-            'document_number': 'BIGINT',
+            'document_number': 'VARCHAR(50)',
             'date': 'DATE',
             'account': 'VARCHAR(50)', 
         }
 
         key_cols_fbs = ('order_number', 'sticker', 'document_number')
         table_name_fbs = 'acceptance_fbs_acts_new'
-        await create_insert_table_db_async(fbs_df, table_name_fbs, columns_type_fbs, key_cols_fbs)
+        create_insert_table_db_sync(fbs_df, table_name_fbs, columns_type_fbs, key_cols_fbs)
     else:
         print("Нет данных FBS для вставки в БД")
