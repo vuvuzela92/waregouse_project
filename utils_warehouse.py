@@ -75,7 +75,7 @@ def documents_list(token, title):
     
     url = 'https://documents-api.wildberries.ru/api/v1/documents/list'
     headers = {'Authorization' : token}
-    beginTime = (datetime.now()-timedelta(days=200)).strftime('%Y-%m-%d')
+    beginTime = (datetime.now()-timedelta(days=10)).strftime('%Y-%m-%d')
     endTime = (datetime.now()-timedelta(days=0)).strftime('%Y-%m-%d') 
     params = {'beginTime' : beginTime,
               'endTime' : endTime,
