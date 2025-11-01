@@ -18,8 +18,6 @@ class OrderStatusRepository:
         query = """
         SELECT 
             a.local_vendor_code,
-            COUNT(CASE WHEN osl.status IN ('IN_TECHNICAL_SUPPLY', 'NEW') THEN 1 END) as total_orders,
-            COUNT(CASE WHEN osl.status = 'IN_TECHNICAL_SUPPLY' THEN 1 END) as in_technical_supply_count,
             COUNT(CASE WHEN osl.status = 'NEW' THEN 1 END) as new_count
         FROM public.order_status_log osl
         JOIN assembly_task as ast ON ast.task_id = osl.order_id
@@ -33,7 +31,7 @@ class OrderStatusRepository:
         ) latest ON osl.order_id = latest.order_id AND osl.created_at = latest.max_created_at
         WHERE osl.status IN ('IN_TECHNICAL_SUPPLY', 'NEW')
         GROUP BY a.local_vendor_code
-        ORDER BY total_orders DESC;
+        ORDER BY new_count DESC;
         """
 
         async with asyncpg.create_pool(self.connection_string) as pool:
@@ -276,8 +274,8 @@ async def get_stock_data_on_api():
                 "Резерв ФБС\n(сервис)": 0,
                 "Резерв ФБО\n(сервис)": 0
             }
-        return_data[product_id]["Резерв ФБС\n(сервис)"] += res['total_orders']
-        return_data[product_id]["Свободный остаток\n(сервис)"] -= res['total_orders']
+        return_data[product_id]["Резерв ФБС\n(сервис)"] += res['new_count']
+        return_data[product_id]["Свободный остаток\n(сервис)"] -= res['new_count']
     return return_data
 
 def safe_open_spreadsheet(title, retries=5, delay=5):
@@ -289,7 +287,7 @@ def safe_open_spreadsheet(title, retries=5, delay=5):
         print(f"[Попытка {attempt} октрыть доступ к таблице")
         try:
             return gc.open(title)
-        except APIError as e:
+        except gspread.error as e:
             if "503" in str(e):
                 print(f"[Попытка {attempt}/{retries}] APIError 503 — повтор через {delay} сек.")
                 time.sleep(delay)
