@@ -514,7 +514,7 @@ async def get_all_fbs_acts_async():
     final_df = final_df[final_df['Фактически принято - Стикер/этикетка'] != 'Итого']
     
     # Из полученных данных формируем акты-приема передачи для ФБО
-    fbo_acts_df = final_df[['№ п\п', 'Товар (наименование)', 'Ед. изм.', 'Фактически принято - баркод', ' - артикул продавца', ' - сорт, размер', ' - КИЗ', ' - ШК короба', ' - кол-во', 'Документ','Номер_документа', 'Дата', 'account']]
+    fbo_acts_df = final_df[['№ п\п', 'Товар (наименование)', 'Ед. изм.', 'Фактически принято - баркод', ' - артикул продавца', ' - сорт, размер', ' - КИЗ', ' - ШК короба', ' - кол-во', 'Документ','Номер_документа', 'Дата', ' - ШК товара', 'account']]
     
     # ВБ иногда путает акты ФБО и ФБС, поэтому фильтруем по ШК короба
     fbo_acts_df = fbo_acts_df[fbo_acts_df[' - ШК короба'].notna()]
@@ -533,6 +533,7 @@ async def get_all_fbs_acts_async():
         'Документ': 'document',
         'Номер_документа': 'document_number',
         'Дата': 'date',
+        ' - ШК товара': 'shk_id',
         'account': 'account'
     })
     
@@ -579,7 +580,12 @@ async def main():
         # Исправляем преобразование даты для FBO
         fbo_df['date'] = pd.to_datetime(fbo_df["date"], dayfirst=True, errors='coerce').dt.date
         fbo_df['num'] = fbo_df['num'].astype(int)
+        # ВБ в какой-то момент убрал поле количество из формы акта ПП по ФБО. Поэтому меняем пустоты на единицу
+        fbo_df['quantity'] = fbo_df['quantity'].fillna(1)
         fbo_df['quantity'] = fbo_df['quantity'].astype(int)
+        # Поле shk_id появилось в акте позже. Поэтом предыдущие значения заполняем нулями
+        fbo_df['shk_id'] = fbo_df['shk_id'].fillna(0)
+        fbo_df['shk_id'] = fbo_df['shk_id'].astype(int)
         
         columns_type_fbo = {
             'num': 'INTEGER',
@@ -594,10 +600,11 @@ async def main():
             'document': 'VARCHAR(255)',
             'document_number': 'VARCHAR(50)',
             'date': 'DATE',
+            'shk_id': 'BIGINT',
             'account': 'VARCHAR(100)'
         }
 
-        key_cols_fbo = ('vendor_code', 'box_barcode', 'document_number')
+        key_cols_fbo = ('vendor_code', 'box_barcode', 'document_number','shk_id')
         table_name_fbo = 'acceptance_fbo_acts_new'
         create_insert_table_db_sync(fbo_df, table_name_fbo, columns_type_fbo, key_cols_fbo)
     else:
