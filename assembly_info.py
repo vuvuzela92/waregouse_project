@@ -85,6 +85,9 @@ if __name__ == "__main__":
     # На всякий случай, проверяем наличие дубликатов
     if df_status_model[['id', 'supplier_status', 'wb_status']].duplicated().sum() > 0:
         df_status_model = df_status_model.drop_duplicates(subset=['id', 'supplier_status', 'wb_status'])
+
+    df_status_model = df_status_model[df_status_model['wb_status'].notna() & (df_status_model['wb_status'] != 'NaN')]
+    
     # Устанавливаем типы данных для БД
     columns_type = {
         'date': 'DATE',  # или 'DATE', если это дата в формате '2025-08-21'
