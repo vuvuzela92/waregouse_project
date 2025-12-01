@@ -1,6 +1,7 @@
 import pandas as pd
 import json
 import base64
+from utils_sql import create_connection_to_vector_db, execute_query
 from datetime import datetime, timedelta
 import io
 import asyncio
@@ -33,7 +34,7 @@ def load_api_tokens():
     
 semaphore = asyncio.Semaphore(10)
 
-async def documents_list_async(token: str, title: str, days_back: int = 50)-> pd.DataFrame:
+async def documents_list_async(token: str, title: str, days_back: int = 2)-> pd.DataFrame:
     """
     Получить все документы с пагинацией
     
@@ -53,8 +54,8 @@ async def documents_list_async(token: str, title: str, days_back: int = 50)-> pd
     
     beginTime = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     endTime = datetime.now().strftime('%Y-%m-%d')
-    # beginTime = '2025-10-24'
-    # endTime = '2025-10-24'
+    # beginTime = '2025-11-12'
+    # endTime = '2025-11-12'
 
     all_documents = []
     offset = 0
@@ -614,6 +615,12 @@ async def main_fbs():
     key_cols_fbs = ('order_number', 'sticker', 'document_number')
     table_name_fbs = 'acceptance_fbs_acts_new'
     create_insert_table_db_sync(df_fbs, table_name_fbs, columns_type_fbs, key_cols_fbs) 
+
+    # Устанавливаем соединение с БД
+    connection = create_connection_to_vector_db()
+    query_fin_weekly_fin_rep = """REFRESH MATERIALIZED VIEW CONCURRENTLY public.check_act_fbs;"""
+    execute_query(connection, query_fin_weekly_fin_rep)
+
 
 async def main_fbo():
     "Получает, обрабатывает и передает данные из АПП ФБС в БД"
