@@ -33,7 +33,7 @@ def load_api_tokens():
     
 semaphore = asyncio.Semaphore(10)
 
-async def documents_list_async(token: str, title: str, days_back: int = 30)-> pd.DataFrame:
+async def documents_list_async(token: str, title: str, days_back: int = 50)-> pd.DataFrame:
     """
     Получить все документы с пагинацией
     
@@ -53,7 +53,9 @@ async def documents_list_async(token: str, title: str, days_back: int = 30)-> pd
     
     beginTime = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
     endTime = datetime.now().strftime('%Y-%m-%d')
-    
+    # beginTime = '2025-10-24'
+    # endTime = '2025-10-24'
+
     all_documents = []
     offset = 0
     limit = 50
