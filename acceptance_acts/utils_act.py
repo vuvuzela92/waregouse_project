@@ -34,7 +34,7 @@ def load_api_tokens():
     
 semaphore = asyncio.Semaphore(10)
 
-async def documents_list_async(account: str, token: str, title: str, days_back: int = 30)-> pd.DataFrame:
+async def documents_list_async(account: str, token: str, title: str, beginTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'), endTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'))-> pd.DataFrame:
     """
     Получить все документы с пагинацией
     
@@ -52,77 +52,76 @@ async def documents_list_async(account: str, token: str, title: str, days_back: 
     url = 'https://documents-api.wildberries.ru/api/v1/documents/list'
     headers = {'Authorization': token}
     all_documents = []
-    for day in range(1, days_back):
-        beginTime = (datetime.now() - timedelta(days=day)).strftime('%Y-%m-%d')
-        endTime = beginTime
-        offset = 0
-        limit = 50
-        
-        async with aiohttp.ClientSession(headers=headers) as session:
-            while True:
-                params = {
-                    'beginTime': beginTime,
-                    'endTime': endTime,
-                    'limit': limit,
-                    'offset': offset
-                }
-                
-                # Добавляем category только если указано
-                if title:
-                    params['category'] = title
-                
-                try:
-                    async with session.get(url, params=params) as res:
-                        if res.status == 200:
-                            data = await res.json()
-                            documents = data.get('data', {}).get('documents', [])
-                            print(f"Успешно получены документы за период {beginTime} - {endTime} по аккаунту {account}")
+    # beginTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    # endTime = beginTime
+    offset = 0
+    limit = 50
+    
+    async with aiohttp.ClientSession(headers=headers) as session:
+        while True:
+            params = {
+                'beginTime': beginTime,
+                'endTime': endTime,
+                'limit': limit,
+                'offset': offset
+            }
+            
+            # Добавляем category только если указано
+            if title:
+                params['category'] = title
+            
+            try:
+                async with session.get(url, params=params) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        documents = data.get('data', {}).get('documents', [])
+                        print(f"Успешно получены документы за период {beginTime} - {endTime} по аккаунту {account}")
+                        
+                        # Если документов нет - выходим
+                        if not documents:
+                            print(f"Документы не найдены для периода {beginTime} - {endTime}")
+                            break
                             
-                            # Если документов нет - выходим
-                            if not documents:
-                                print(f"Документы не найдены для периода {beginTime} - {endTime}")
-                                break
-                                
-                            all_documents.extend(documents)
-                            print(f"Получено {len(documents)} документов, всего: {len(all_documents)}, offset: {offset}")
+                        all_documents.extend(documents)
+                        print(f"Получено {len(documents)} документов, всего: {len(all_documents)}, offset: {offset}")
+                        
+                        # Если получено меньше limit - это последняя страница
+                        if len(documents) < limit:
+                            print(f"Последняя страница: всего получено {len(all_documents)} документов")
+                            break
                             
-                            # Если получено меньше limit - это последняя страница
-                            if len(documents) < limit:
-                                print(f"Последняя страница: всего получено {len(all_documents)} документов")
-                                break
-                                
-                            offset += limit
-                            
-                            # Соблюдаем лимит запросов - 1 запрос в 10 секунд
+                        offset += limit
+                        
+                        # Соблюдаем лимит запросов - 1 запрос в 10 секунд
+                        await asyncio.sleep(10)
+                        
+                    else:
+                        error_text = await res.text()
+                        print(f"Ошибка HTTP {res.status}: {error_text}")
+                        
+                        # При ошибке 429 (Too Many Requests) ждем дольше
+                        if res.status == 429:
+                            await asyncio.sleep(30)
+                        else:
                             await asyncio.sleep(10)
                             
-                        else:
-                            error_text = await res.text()
-                            print(f"Ошибка HTTP {res.status}: {error_text}")
-                            
-                            # При ошибке 429 (Too Many Requests) ждем дольше
-                            if res.status == 429:
-                                await asyncio.sleep(30)
-                            else:
-                                await asyncio.sleep(10)
-                                
-                            # При серьезных ошибках прерываем выполнение
-                            if res.status >= 500:
-                                break
-                            
-                except aiohttp.ClientError as err:
-                    print(f"Сетевая ошибка: {err}")
-                    await asyncio.sleep(10)
-                    break
-                except asyncio.TimeoutError:
-                    print("Таймаут запроса")
-                    await asyncio.sleep(10)
-                    break
-                except Exception as e:
-                    print(f"Неожиданная ошибка: {e}")
-                    await asyncio.sleep(10)
-                    break
-    
+                        # При серьезных ошибках прерываем выполнение
+                        if res.status >= 500:
+                            break
+                        
+            except aiohttp.ClientError as err:
+                print(f"Сетевая ошибка: {err}")
+                await asyncio.sleep(10)
+                break
+            except asyncio.TimeoutError:
+                print("Таймаут запроса")
+                await asyncio.sleep(10)
+                break
+            except Exception as e:
+                print(f"Неожиданная ошибка: {e}")
+                await asyncio.sleep(10)
+                break
+
     if all_documents:
         df = pd.DataFrame(all_documents)
         return df
@@ -363,7 +362,7 @@ def create_insert_table_db_sync(df: pd.DataFrame, table_name: str, columns_type:
             engine.dispose()    
 
 # Получаем перечень доступных для скачивания документов
-async def create_acceptance_certificate_fbs_async():
+async def create_acceptance_certificate_fbs_async(beginTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'), endTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')):
     """Функция обрабатывает данные полученные в documents_list
     для каждого кабинета на ВБ. Забирает информацию об АПП ФБС"""
     tokens = load_api_tokens()
@@ -371,7 +370,7 @@ async def create_acceptance_certificate_fbs_async():
     doc_list_data = []
     for account, token in tokens.items():
         # Получаем документы для 'act-income-mp'
-        result_mp = await documents_list_async(account, token, 'act-income-mp')
+        result_mp = await documents_list_async(account, token, 'act-income-mp', beginTime, endTime)
         if result_mp is not None and not result_mp.empty:
             result_mp['account'] = account
             result_mp['doc_type'] = 'act-income-mp'
@@ -418,13 +417,13 @@ async def create_acceptance_certificate_fbo_async():
         print("Не удалось получить ни одного документа")
         return pd.DataFrame()  # возвращаем пустой DataFrame вместо None   
 
-async def get_all_fbs_acts_async():
+async def get_all_fbs_acts_async(beginTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'), endTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')):
     """Получает и обрабатывает акты ПП ФБС/ФБО со всех ЛК"""
     # Собирает полный перечень актов
     full_docs = []
     
     # ДОБАВЛЕНО AWAIT - получаем DataFrame с документами
-    acceptance_certificate_df = await create_acceptance_certificate_fbs_async()
+    acceptance_certificate_df = await create_acceptance_certificate_fbs_async(beginTime, endTime)
     
     # Проверяем, что DataFrame не пустой
     if acceptance_certificate_df.empty:
@@ -595,32 +594,35 @@ async def get_all_fbo_acts_async():
     print('Данные по ФБО получены')
     return fbo_acts_df
 
-async def main_fbs():
+async def main_fbs(days_back=30):
     "Получает, обрабатывает и передает данные из АПП ФБС в БД"
-    df_fbs = await get_all_fbs_acts_async()
-    columns_type_fbs = {
-        'num': 'INTEGER',
-        'order_number': 'VARCHAR(255)',
-        'unit': 'VARCHAR(50)',
-        'sticker': 'VARCHAR(255)',
-        'quantity': 'INTEGER', 
-        'document': 'VARCHAR(255)',
-        'document_number': 'VARCHAR(50)',
-        'date': 'DATE',
-        'account': 'VARCHAR(50)', 
-    }
-    key_cols_fbs = ('order_number', 'sticker', 'document_number')
-    table_name_fbs = 'acceptance_fbs_acts_new'
-    create_insert_table_db_sync(df_fbs, table_name_fbs, columns_type_fbs, key_cols_fbs) 
+    docs_data = []
+    for day in range(1, days_back):
+        beginTime = endTime =(datetime.now() - timedelta(days=day)).strftime('%Y-%m-%d')
+        docs_data.append(await(get_all_fbs_acts_async(beginTime, endTime)))
+        df_fbs = pd.concat(docs_data)
+        columns_type_fbs = {
+            'num': 'INTEGER',
+            'order_number': 'VARCHAR(255)',
+            'unit': 'VARCHAR(50)',
+            'sticker': 'VARCHAR(255)',
+            'quantity': 'INTEGER', 
+            'document': 'VARCHAR(255)',
+            'document_number': 'VARCHAR(50)',
+            'date': 'DATE',
+            'account': 'VARCHAR(50)', 
+        }
+        key_cols_fbs = ('order_number', 'sticker', 'document_number')
+        table_name_fbs = 'acceptance_fbs_acts_new'
+        create_insert_table_db_sync(df_fbs, table_name_fbs, columns_type_fbs, key_cols_fbs) 
 
-    # Устанавливаем соединение с БД
-    connection = create_connection_to_vector_db()
-    query_fin_weekly_fin_rep = """REFRESH MATERIALIZED VIEW public.check_act_fbs;"""
-    execute_query(connection, query_fin_weekly_fin_rep)
-
+        # Устанавливаем соединение с БД
+        connection = create_connection_to_vector_db()
+        query_fin_weekly_fin_rep = """REFRESH MATERIALIZED VIEW public.check_act_fbs;"""
+        execute_query(connection, query_fin_weekly_fin_rep)
 
 async def main_fbo():
-    "Получает, обрабатывает и передает данные из АПП ФБС в БД"
+    "Получает, обрабатывает и передает данные из АПП ФБО в БД"
     df_fbo = await get_all_fbo_acts_async()
     columns_type_fbo = {
         'num': 'INTEGER',
