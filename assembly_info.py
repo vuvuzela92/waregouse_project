@@ -86,7 +86,16 @@ if __name__ == "__main__":
     if df_status_model[['id', 'supplier_status', 'wb_status']].duplicated().sum() > 0:
         df_status_model = df_status_model.drop_duplicates(subset=['id', 'supplier_status', 'wb_status'])
 
+    # Убираем строки с пустым статусом ВБ
     df_status_model = df_status_model[df_status_model['wb_status'].notna() & (df_status_model['wb_status'] != 'NaN')]
+
+    # Убираем строки со статусом ожидания, если поставщик отменил
+    df_status_model = df_status_model[
+        ~(
+            (df_status_model['wb_status'] == 'waiting') &
+            (df_status_model['supplier_status'] == 'cancel')
+        )
+    ]
     
     # Устанавливаем типы данных для БД
     columns_type = {
