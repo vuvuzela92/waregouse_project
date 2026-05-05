@@ -5,7 +5,7 @@ import os
 # Укажи путь к папке, где лежит utils_warehouse.py
 # sys.path.append(r'D:\Pytnon_scripts\warehouse_scripts')
 # sys.path.append(r'D:\Pytnon_scripts\tokens.json')
-from utils_warehouse import load_api_tokens, create_insert_table_db
+from utils_warehouse import load_api_tokens
 import asyncio
 import logging
 
@@ -26,6 +26,64 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+from sqlalchemy import create_engine
+from sqlalchemy.sql import text
+import os
+from dotenv import load_dotenv
+
+# Создаем движок ОДИН РАЗ при импорте модуля
+# pool_size=5 означает, что 5 соединений всегда будут готовы к работе
+# max_overflow=10 позволяет временно открыть еще 10, если нагрузка вырастет
+load_dotenv()
+db_url = f"postgresql://{os.getenv('USER_2')}:{os.getenv('PASSWORD_2')}@{os.getenv('HOST_2')}:{os.getenv('PORT_2')}/{os.getenv('NAME_2')}"
+engine = create_engine(db_url, pool_size=5, max_overflow=10, pool_timeout=30)
+
+def create_insert_table_db(df: pd.DataFrame, table_name: str, columns_type: dict, key_cols: tuple):
+    """
+    Загружает DataFrame в БД, используя пул соединений SQLAlchemy.
+    """
+    if df.empty:
+        print("DataFrame пуст, загрузка отменена.")
+        return
+
+    # Подготовка SQL для создания таблицы
+    cols_def = ", ".join([f"{col} {dtype}" for col, dtype in columns_type.items()])
+    unique_constr = f"UNIQUE ({', '.join(key_cols)})"
+    
+    create_query = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        {cols_def},
+        {unique_constr}
+    );
+    """
+
+    # Подготовка UPSERT запроса
+    columns = list(df.columns)
+    placeholders = ", ".join([f":{col}" for col in columns])
+    update_clause = ", ".join([f"{col}=EXCLUDED.{col}" for col in columns if col not in key_cols])
+    
+    upsert_query = f"""
+    INSERT INTO {table_name} ({', '.join(columns)})
+    VALUES ({placeholders})
+    ON CONFLICT ({', '.join(key_cols)}) 
+    DO UPDATE SET {update_clause};
+    """
+
+    try:
+        # Берем соединение из пула
+        with engine.begin() as conn:
+            # 1. Создаем таблицу
+            conn.execute(text(create_query))
+            
+            # 2. Загружаем данные (преобразуем DF в список словарей для SQLAlchemy)
+            data = df.to_dict(orient='records')
+            conn.execute(text(upsert_query), data)
+            
+        print(f"Успешно: {len(df)} строк обработано в таблице {table_name}")
+    except Exception as e:
+        print(f"Ошибка при работе с БД через пул: {e}")
 
 if __name__ == "__main__":
     logger.info('Начало работы скрипта')
@@ -110,7 +168,7 @@ if __name__ == "__main__":
         'address': 'TEXT',
         'scan_price': 'NUMERIC(10,3)',
         'price': 'NUMERIC(10,3)',
-        'converted_price': 'INUMERIC(10,3)',
+        'converted_price': 'NUMERIC(10,3)',
         'comment': 'TEXT',
         'delivery_type': 'TEXT',
         'order_uid': 'TEXT',

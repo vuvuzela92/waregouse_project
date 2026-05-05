@@ -101,7 +101,7 @@ async def documents_list_async(account: str, token: str, title: str, beginTime =
                         
                         # При ошибке 429 (Too Many Requests) ждем дольше
                         if res.status == 429:
-                            await asyncio.sleep(30)
+                            await asyncio.sleep(10)
                         else:
                             await asyncio.sleep(10)
                             
@@ -172,7 +172,7 @@ async def get_decoded_acts(account, doc_list, tokens):
                             continue
                         if res.status == 401:
                             print(f"401 ошибка авторизации по ЛК {account}")
-                            await asyncio.sleep(300)
+                            await asyncio.sleep(1)
                             continue
                         if res.status == 200:
                             data = await res.json()
@@ -390,7 +390,7 @@ async def create_acceptance_certificate_fbs_async(beginTime = (datetime.now() - 
     
     
 # Получаем перечень доступных для скачивания документов
-async def create_acceptance_certificate_fbo_async():
+async def create_acceptance_certificate_fbo_async(beginTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'), endTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')):
     """Функция обрабатывает данные полученные в documents_list
     для каждого кабинета на ВБ. Забирает информацию об АПП ФБО"""
     tokens = load_api_tokens()
@@ -399,7 +399,7 @@ async def create_acceptance_certificate_fbo_async():
     
     for account, token in tokens.items():
         # Получаем документы для 'act-income'
-        result_income = await documents_list_async(account, token, 'act-income')
+        result_income = await documents_list_async(account, token, 'act-income', beginTime, endTime)
         if result_income is not None and not result_income.empty:  
             result_income['account'] = account
             result_income['doc_type'] = 'act-income'
@@ -502,13 +502,13 @@ async def get_all_fbs_acts_async(beginTime = (datetime.now() - timedelta(days=1)
     return fbs_acts_df
 
 
-async def get_all_fbo_acts_async():
+async def get_all_fbo_acts_async(beginTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'), endTime = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')):
     """Получает и обрабатывает акты ПП ФБО со всех ЛК"""
     # Собирает полный перечень актов
     full_docs = []
     
     # ДОБАВЛЕНО AWAIT - получаем DataFrame с документами
-    acceptance_certificate_df = await create_acceptance_certificate_fbo_async()
+    acceptance_certificate_df = await create_acceptance_certificate_fbo_async(beginTime, endTime)
     
     # Проверяем, что DataFrame не пустой
     if acceptance_certificate_df.empty:
@@ -545,8 +545,14 @@ async def get_all_fbo_acts_async():
         print("Объединенный DataFrame пуст")
         return pd.DataFrame(), pd.DataFrame()
     
-    # Из полученных данных формируем акты-приема передачи для ФБО
-    fbo_acts_df = final_df[['№ п\п', 'Товар (наименование)', 'Ед. изм.', 'Фактически принято - баркод', ' - артикул продавца', ' - сорт, размер', ' - КИЗ', ' - ШК короба', ' - кол-во', 'Документ','Номер_документа', 'Дата', ' - ШК товара', 'account']]
+    if ' - ШК товара' in final_df.columns:
+        # Из полученных данных формируем акты-приема передачи для ФБО
+        fbo_acts_df = final_df[['№ п\п', 'Товар (наименование)', 'Ед. изм.', 'Фактически принято - баркод', ' - артикул продавца', ' - сорт, размер', ' - КИЗ', ' - ШК короба', ' - кол-во', 'Документ','Номер_документа', 'Дата', ' - ШК товара', 'account']]
+    else:
+        final_df[' - ШК товара'] = 0
+        # Из полученных данных формируем акты-приема передачи для ФБО
+        fbo_acts_df = final_df[['№ п\п', 'Товар (наименование)', 'Ед. изм.', 'Фактически принято - баркод', ' - артикул продавца', ' - сорт, размер', ' - КИЗ', ' - ШК короба', ' - кол-во', 'Документ','Номер_документа', 'Дата', ' - ШК товара', 'account']]
+
     
     # ВБ иногда путает акты ФБО и ФБС, поэтому фильтруем по ШК короба
     fbo_acts_df = fbo_acts_df[fbo_acts_df[' - ШК короба'].notna()]
@@ -621,26 +627,30 @@ async def main_fbs(days_back=30):
         query_fin_weekly_fin_rep = """REFRESH MATERIALIZED VIEW public.check_act_fbs;"""
         execute_query(connection, query_fin_weekly_fin_rep)
 
-async def main_fbo():
+async def main_fbo(days_back=30):
     "Получает, обрабатывает и передает данные из АПП ФБО в БД"
-    df_fbo = await get_all_fbo_acts_async()
-    columns_type_fbo = {
-        'num': 'INTEGER',
-        'product_name': 'VARCHAR(255)',
-        'unit': 'VARCHAR(50)',
-        'barcode': 'VARCHAR(50)', 
-        'vendor_code': 'VARCHAR(50)',
-        'size': 'VARCHAR(50)',
-        'kiz': 'VARCHAR(255)',
-        'box_barcode': 'VARCHAR(50)',
-        'quantity': 'INTEGER',
-        'document': 'VARCHAR(255)',
-        'document_number': 'VARCHAR(50)',
-        'date': 'DATE',
-        'shk_id': 'BIGINT',
-        'account': 'VARCHAR(100)'
-    }
+    docs_data = []
+    for day in range(1, days_back):
+        beginTime = endTime =(datetime.now() - timedelta(days=day)).strftime('%Y-%m-%d')
+        docs_data.append(await(get_all_fbo_acts_async(beginTime, endTime)))
+        df_fbo = pd.concat(docs_data)
+        columns_type_fbo = {
+            'num': 'INTEGER',
+            'product_name': 'VARCHAR(255)',
+            'unit': 'VARCHAR(50)',
+            'barcode': 'VARCHAR(50)', 
+            'vendor_code': 'VARCHAR(50)',
+            'size': 'VARCHAR(50)',
+            'kiz': 'VARCHAR(255)',
+            'box_barcode': 'VARCHAR(50)',
+            'quantity': 'INTEGER',
+            'document': 'VARCHAR(255)',
+            'document_number': 'VARCHAR(50)',
+            'date': 'DATE',
+            'shk_id': 'BIGINT',
+            'account': 'VARCHAR(100)'
+        }
 
-    key_cols_fbo = ('vendor_code', 'box_barcode', 'document_number','shk_id')
-    table_name_fbo = 'acceptance_fbo_acts_new'
-    create_insert_table_db_sync(df_fbo, table_name_fbo, columns_type_fbo, key_cols_fbo)          
+        key_cols_fbo = ('vendor_code', 'box_barcode', 'document_number','shk_id')
+        table_name_fbo = 'acceptance_fbo_acts_new'
+        create_insert_table_db_sync(df_fbo, table_name_fbo, columns_type_fbo, key_cols_fbo)          
